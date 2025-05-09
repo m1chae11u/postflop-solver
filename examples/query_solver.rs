@@ -34,7 +34,15 @@ fn main() {
     let action_tree = ActionTree::new(tree_config.clone()).unwrap(); // Clone tree_config if needed later
     let mut game = PostFlopGame::with_config(card_config, action_tree).unwrap();
 
-    println!("Game configured. Initial state: {:?}, Current player: {:?}", game.current_state(), game.current_player());
+    // Manually determine the current board state for printing
+    let num_board_cards = game.current_board().len();
+    let current_board_state = match num_board_cards {
+        3 => BoardState::Flop,
+        4 => BoardState::Turn,
+        5 => BoardState::River,
+        _ => panic!("Unexpected number of board cards: {}", num_board_cards), // Or handle as an error/default
+    };
+    println!("Game configured. Initial state: {:?}, Current player: {:?}", current_board_state, game.current_player());
     println!("OOP private cards: {:?}", holes_to_strings(game.private_cards(0)).unwrap_or_default().len());
     println!("IP private cards: {:?}", holes_to_strings(game.private_cards(1)).unwrap_or_default().len());
 
@@ -58,7 +66,7 @@ fn main() {
     println!("Solver finished. Final Exploitability: {:.4e} (target was {:.4e})", exploitability, target_exploitability);
 
     // Ensure weights are cached for EV/Equity calculations if you didn't run finalize or full solve
-    game.cache_normalized_weights();
+    // game.cache_normalized_weights(); // MOVED: This needs to be after any navigation like back_to_root
 
     // 4. Get and Print Solver Output (for the current node, typically the root after solve)
     // -------------------------------------------------------------------------------------
@@ -99,6 +107,7 @@ fn main() {
     // or for a specific player *before* their action.
     // If you called solve(), the game state is at the root.
     game.back_to_root(); // Ensure we are at the root to get overall EV/Equity if needed
+    game.cache_normalized_weights(); // ADDED: Cache weights for the root node before getting EV/Equity
     println!("\n--- Expected Values (EV) for OOP (Player 0) at the root ---");
     let oop_ev = game.expected_values(0);
     let oop_hands_for_ev = game.private_cards(0);
