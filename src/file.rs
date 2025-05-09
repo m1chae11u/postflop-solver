@@ -14,7 +14,7 @@ use crate::game::*;
 use crate::interface::*;
 use bincode::{Decode, Encode};
 use std::fs::File;
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, BufWriter};
 use std::path::Path;
 
 const MAGIC: u32 = 0x09f15790;
@@ -27,7 +27,7 @@ pub enum DataType {
 }
 
 /// A trait for data that can be saved into a file.
-pub trait FileData: Decode + Encode {
+pub trait FileData: Decode<()> + Encode {
     #[doc(hidden)]
     fn data_type() -> DataType;
     #[doc(hidden)]
@@ -36,12 +36,13 @@ pub trait FileData: Decode + Encode {
     fn estimated_memory_usage(&self) -> u64;
 }
 
-fn encode_into_std_write<E: Encode, W: Write>(
+fn encode_into_std_write<E: Encode, WStdio: std::io::Write>(
     val: E,
-    writer: &mut W,
+    writer: &mut WStdio,
     err_msg: &str,
-) -> Result<usize, String> {
+) -> Result<(), String> {
     bincode::encode_into_std_write(val, writer, bincode::config::standard())
+        .map(|_| ())
         .map_err(|e| format!("{}: {}", err_msg, e))
 }
 
@@ -58,10 +59,10 @@ fn encode_into_std_write<E: Encode, W: Write>(
 /// - `writer`: The writer to write the data into.
 /// - `compression_level`: The zstd compression level to use. If `None`, no compression is used.
 ///   `Some(level)` can only be specified if the `zstd` feature is enabled.
-pub fn save_data_into_std_write<T: FileData, W: Write>(
+pub fn save_data_into_std_write<T: FileData, WStdio: std::io::Write>(
     data: &T,
     memo: &str,
-    writer: &mut W,
+    writer: &mut WStdio,
     compression_level: Option<i32>,
 ) -> Result<(), String> {
     if !data.is_ready_to_save() {
@@ -139,7 +140,7 @@ pub fn save_data_to_file<T: FileData, P: AsRef<Path>>(
     save_data_into_std_write(data, memo, &mut writer, compression_level)
 }
 
-fn decode_from_std_read<D: Decode, R: Read>(reader: &mut R, err_msg: &str) -> Result<D, String> {
+fn decode_from_std_read<DFile: Decode<()>, RStdio: std::io::Read>(reader: &mut RStdio, err_msg: &str) -> Result<DFile, String> {
     bincode::decode_from_std_read(reader, bincode::config::standard())
         .map_err(|e| format!("{}: {}", err_msg, e))
 }
@@ -160,8 +161,8 @@ fn decode_from_std_read<D: Decode, R: Read>(reader: &mut R, err_msg: &str) -> Re
 ///
 /// A tuple of the deserialized data (either a [`PostFlopGame`] or a [`BunchingData`]) and the memo
 /// string.
-pub fn load_data_from_std_read<T: FileData, R: Read>(
-    reader: &mut R,
+pub fn load_data_from_std_read<T: FileData, RStdio: std::io::Read>(
+    reader: &mut RStdio,
     max_memory_usage: Option<u64>,
 ) -> Result<(T, String), String> {
     let magic: u32 = decode_from_std_read(reader, "Failed to read magic number")?;

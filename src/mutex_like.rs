@@ -1,12 +1,13 @@
 use std::cell::UnsafeCell;
+use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 
 #[cfg(feature = "bincode")]
 use bincode::{
-    de::{BorrowDecoder, Decoder},
+    Decode, Encode, BorrowDecode,
+    de::{Decoder, BorrowDecoder},
     enc::Encoder,
     error::{DecodeError, EncodeError},
-    BorrowDecode, Decode, Encode,
 };
 
 /// Mutex-like wrapper, but it actually does not perform any locking.
@@ -92,24 +93,48 @@ impl<'a, T: ?Sized + 'a> DerefMut for MutexGuardLike<'a, T> {
 
 #[cfg(feature = "bincode")]
 impl<T: Encode> Encode for MutexLike<T> {
-    #[inline]
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         self.lock().encode(encoder)
     }
 }
 
 #[cfg(feature = "bincode")]
-impl<T: Decode> Decode for MutexLike<T> {
-    #[inline]
-    fn decode<D: Decoder>(decoder: &mut D) -> Result<Self, DecodeError> {
-        Ok(Self::new(T::decode(decoder)?))
+impl<C, T: Decode<C>> Decode<C> for MutexLike<T> {
+    fn decode<D: Decoder<Context = C>>(decoder: &mut D) -> Result<Self, DecodeError> {
+        let inner = T::decode(decoder)?;
+        Ok(MutexLike::new(inner))
     }
 }
 
 #[cfg(feature = "bincode")]
-impl<'de, T: BorrowDecode<'de>> BorrowDecode<'de> for MutexLike<T> {
-    #[inline]
-    fn borrow_decode<D: BorrowDecoder<'de>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        Ok(Self::new(T::borrow_decode(decoder)?))
+impl<'de, C, T: BorrowDecode<'de, C>> BorrowDecode<'de, C> for MutexLike<T> {
+    fn borrow_decode<D: BorrowDecoder<'de, Context = C>>(
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let inner = T::borrow_decode(decoder)?;
+        Ok(MutexLike::new(inner))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_decode() {
+        let mutex_like = MutexLike::new(42);
+        let mut encoder = bincode::enc::Encoder::new();
+        mutex_like.encode(&mut encoder).unwrap();
+        let decoded_mutex_like = Decode::decode(&mut bincode::de::Decoder::new(encoder.into_inner())).unwrap();
+        assert_eq!(*decoded_mutex_like.lock(), 42);
+    }
+
+    #[test]
+    fn test_borrow_decode() {
+        let mutex_like = MutexLike::new("Hello, world!");
+        let mut encoder = bincode::enc::Encoder::new();
+        mutex_like.encode(&mut encoder).unwrap();
+        let decoded_mutex_like = BorrowDecode::borrow_decode(&mut bincode::de::BorrowDecoder::new(encoder.into_inner())).unwrap();
+        assert_eq!(*decoded_mutex_like.lock(), "Hello, world!");
     }
 }
