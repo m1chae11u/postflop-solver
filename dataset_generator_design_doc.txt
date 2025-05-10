@@ -1,0 +1,105 @@
+# Poker Dataset Generator: Range Generation Design
+
+This document outlines the design and implementation of the `range_generator.py` module, which is responsible for generating poker hand ranges for game state analysis.
+
+## Core Objectives:
+
+1.  **Define Base Ranges:** Establish standard archetypes for player ranges (Tight, Balanced, Loose) for both In-Position (IP) and Out-of-Position (OOP) players.
+2.  **Dynamic Range Adaptation:** For a designated "hero" player with a known hand, adaptively select the most appropriate base range type to ensure coherence between the hero\'s actual holding and the assigned range.
+3.  **Range Perturbation:** Introduce controlled randomness to the base ranges to create a diverse set of slightly varied ranges, making the generated dataset richer.
+4.  **Output Formats:** Provide ranges as both lists of hand strings and comma-separated strings suitable for poker solver inputs.
+
+## Key Components & Logic in `range_generator.py`:
+
+### 1. Constants and Basic Hand Utilities:
+
+*   **`RANKS`**: List of card ranks (`['A', 'K', ..., '2']`).
+*   **`HAND_TYPES`**: `['s', 'o']` (suited, offsuit).
+*   **`ALL_169_HAND_COMBINATIONS`**: A list holding all 169 unique poker hand combinations (e.g., "AA", "AKs", "T9o").
+    *   Initialized by `_initialize_169_hands()`.
+*   **`SORTED_MASTER_HAND_LIST`**: `ALL_169_HAND_COMBINATIONS` sorted by a canonical strength order (AA, AKs, AKo, KK...). This is crucial for strength comparisons and neighbor identification.
+*   **`HAND_STRENGTH_RANK`**: A dictionary mapping each hand string from `SORTED_MASTER_HAND_LIST` to its numerical strength rank (0 = strongest, 168 = weakest).
+*   **`get_rank_index(rank_char)`**: Helper to get the numerical index of a rank character.
+
+### 2. Shorthand Range Expansion:
+
+*   **`expand_range_shorthand(shorthand_str)`**:
+    *   Takes a poker shorthand string (e.g., "JJ+", "A9s+", "77-99", "AQ+") as input.
+    *   Expands it into a list of specific, canonical hand combinations (e.g., "JJ+" -> `["JJ", "QQ", "KK", "AA"]`).
+    *   Handles pairs, suited/offsuit kickers, plus notation, and dash notation for common cases.
+    *   Uses `ALL_169_HAND_COMBINATIONS` for validation and `HAND_TYPES` for suit logic.
+
+### 3. Reference Range Definitions:
+
+*   **`REFERENCE_RANGES_SHORTHAND`**: A nested dictionary storing the defined base ranges using shorthand notation.
+    *   Structure: `{'OOP': {'Tight': "shorthand", ...}, 'IP': {'Tight': "shorthand", ...}}`
+    *   These define the archetypal Tight, Balanced, and Loose ranges for OOP and IP players.
+*   **`PROCESSED_REFERENCE_RANGES`**: A nested dictionary populated by processing `REFERENCE_RANGES_SHORTHAND`.
+    *   Structure mirrors `REFERENCE_RANGES_SHORTHAND` but replaces shorthand strings with sorted lists of actual hand combinations (expanded by `expand_range_shorthand`).
+    *   Populated by `_process_reference_ranges()` at module load.
+*   **`_process_reference_ranges()`**: Iterates through `REFERENCE_RANGES_SHORTHAND`, calls `expand_range_shorthand` for each part of the comma-separated shorthand, and stores the resulting lists in `PROCESSED_REFERENCE_RANGES`.
+
+### 4. Range Strength and Boundary Analysis:
+
+*   **`get_range_strength_bounds(range_list)`**:
+    *   Input: A list of hand strings.
+    *   Output: A tuple `(min_strength_rank, max_strength_rank)` representing the strongest and weakest hands in the list, based on `HAND_STRENGTH_RANK`.
+
+### 5. Adaptive Range Selection for Hero:
+
+*   **Constants for Adaptive Logic:**
+    *   `PLAYER_ROLES = ['OOP', 'IP']`
+    *   `RANGE_TYPE_ORDER = ['Tight', 'Balanced', 'Loose']` (Defines adjustment path)
+    *   `DEFAULT_INITIAL_RANGE_TYPE = 'Balanced'`
+    *   `ACCEPTABLE_WEAKNESS_OFFSET`, `ACCEPTABLE_STRENGTH_OFFSET`: Thresholds for determining if a hero's hand is too far from a range category's bounds.
+*   **`determine_hero_range_type_and_base_range(...)`**:
+    *   Inputs: `hero_hand_str`, `hero_player_role`, `initial_range_type_preference`, offsets.
+    *   Compares the `hero_hand_str`'s strength rank against the bounds of the `PROCESSED_REFERENCE_RANGES` for the `initial_range_type_preference`.
+    *   If the hero's hand is too weak for the current type (based on `weakness_offset`), it attempts to shift to a looser type in `RANGE_TYPE_ORDER`.
+    *   If too strong (based on `strength_offset`), it attempts to shift to a tighter type.
+    *   Returns the `final_hero_range_type` and the corresponding `final_base_hero_range_list`.
+
+### 6. Range Perturbation:
+
+*   **`PERTURBATION_PARAMS`**: A dictionary holding parameters for the perturbation process:
+    *   `prob_keep_core_hand`: Probability a hand from the base range is kept.
+    *   `prob_add_stronger_neighbor`, `prob_add_weaker_neighbor`: Probabilities for adding neighboring hands.
+    *   `neighbor_window_half_size`: Defines how many hands (by strength rank) around a core hand are considered neighbors.
+    *   `max_added_hands_percentage`, `max_removed_hands_percentage`: Caps on how much the range can change relative to its original size.
+*   **`_perform_perturbation(base_range_list, player_role, range_type)`**:
+    *   Takes a `base_range_list` (e.g., selected by adaptive logic for hero, or directly for villain).
+    *   **Keep/Remove Core Hands:** Iterates through `base_range_list`. Each hand is kept or (conditionally, respecting `max_removed_hands_percentage`) removed based on `prob_keep_core_hand`.
+    *   **Identify & Add Neighbors:**
+        *   For each hand originally in the base range, it identifies "neighboring" hands from `SORTED_MASTER_HAND_LIST` within the `neighbor_window_half_size`.
+        *   Neighbors not in the original base range become candidates for addition.
+        *   Candidates are shuffled and probabilistically added (respecting `max_added_hands_percentage`) based on an average of `prob_add_stronger_neighbor` and `prob_add_weaker_neighbor`.
+    *   Returns a sorted list of perturbed hand strings.
+
+### 7. Main Range Generation Function:
+
+*   **`generate_player_range_info(...)`**:
+    *   Primary interface for generating range data for a player.
+    *   Inputs: `player_role`, `is_hero` (boolean), `hero_hand_str_if_any`, `range_type_preference`.
+    *   **Hero Logic:** If `is_hero`, it calls `determine_hero_range_type_and_base_range` to get an adaptively chosen base range.
+    *   **Villain Logic:** If not `is_hero`, it uses `range_type_preference` directly to select a base range from `PROCESSED_REFERENCE_RANGES`.
+    *   Calls `_perform_perturbation` on the selected base range.
+    *   **Hero Hand Force Inclusion:** If `is_hero`, it ensures `hero_hand_str_if_any` is present in the final perturbed list (safety net).
+    *   Converts the final list to a comma-separated string.
+    *   Returns a dictionary containing: `player_role`, `is_hero`, `hero_hand_actual`, `range_type_selected`, counts, sample hands, and `final_range_str`.
+
+## Workflow for Generating a Gamestate's Ranges:
+
+1.  For a given gamestate, identify OOP and IP players.
+2.  Decide which player is the "hero" (if applicable) and get their `hero_actual_hand_string`.
+3.  Optionally, specify an initial `range_type_preference` (e.g., 'Balanced') for both hero and villain.
+4.  Call `generate_player_range_info` for the OOP player (specifying if they are hero, their hand, and preference).
+5.  Call `generate_player_range_info` for the IP player (specifying if they are hero, their hand, and preference).
+6.  The returned dictionaries will contain the `final_range_str` for OOP and IP to be used by the solver, along with metadata about how those ranges were derived.
+
+## Future Considerations/Refinements:
+
+*   Make `PERTURBATION_PARAMS` configurable per `range_type` or `player_role` for more fine-grained control.
+*   Implement more sophisticated neighbor identification or addition probabilities in `_perform_perturbation`.
+*   Allow for multiple perturbation runs on the same base range to generate several distinct variations for a single scenario.
+*   Integrate with a CSV or data source to process multiple gamestates.
+--- 

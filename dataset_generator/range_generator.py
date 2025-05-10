@@ -400,14 +400,110 @@ def determine_hero_range_type_and_base_range(
     return current_range_type, final_base_list
 
 
+# --- Perturbation Configuration & Logic ---
+
+# These are global for now, can be refined per range_type/role later
+PERTURBATION_PARAMS = {
+    # Probability of keeping a hand that's in the base range
+    'prob_keep_core_hand': 0.90,  # e.g., 90% chance to keep a hand from the base
+    
+    # When considering adding neighbors:
+    # Prob. of adding a neighbor stronger than the current base hand (but not in base)
+    'prob_add_stronger_neighbor': 0.10, 
+    # Prob. of adding a neighbor weaker than the current base hand (but not in base)
+    'prob_add_weaker_neighbor': 0.08,
+    
+    # How many hands "around" a base hand in the SORTED_MASTER_HAND_LIST to consider as neighbors
+    'neighbor_window_half_size': 7, # e.g., 7 stronger and 7 weaker (total window of 15 around hand)
+    
+    # To prevent range from drifting too much or becoming too small/large
+    # Max percentage of original range size that can be added
+    'max_added_hands_percentage': 0.20, # 20% of original size
+    # Max percentage of original range size that can be removed (from original core hands)
+    'max_removed_hands_percentage': 0.20, # 20% of original size
+}
+
 def _perform_perturbation(base_range_list, player_role, range_type):
     """
-    (STUB) Performs perturbation on a base range list.
-    For now, it just returns a copy of the base list.
+    Performs perturbation on a base range list.
+    - Some core hands might be removed.
+    - Some neighboring hands (stronger or weaker) might be added.
+    - Total changes are capped to avoid distorting the range too much.
     """
-    # In the future, this will involve logic to slightly alter the base_range_list
-    # based on player_role and range_type.
-    return list(base_range_list) # Return a copy
+    if not base_range_list:
+        return []
+
+    params = PERTURBATION_PARAMS # Could be specific if config is per role/type
+    base_range_set = set(base_range_list)
+    perturbed_hands_set = set()
+    
+    # --- Step 1: Decide which core hands to keep --- 
+    removed_core_hands_count = 0
+    max_removals_allowed = int(len(base_range_list) * params['max_removed_hands_percentage'])
+
+    for hand in base_range_list:
+        if random.random() < params['prob_keep_core_hand']:
+            perturbed_hands_set.add(hand)
+        else:
+            if removed_core_hands_count < max_removals_allowed:
+                removed_core_hands_count += 1
+                # Hand is not added to perturbed_hands_set, effectively removed
+            else:
+                perturbed_hands_set.add(hand) # Cap on removals reached, keep it
+
+    # --- Step 2: Identify candidate neighbors and probabilistically add them --- 
+    candidate_neighbors_to_add = set()
+    
+    # Consider neighbors of ALL hands originally in the base range, 
+    # even if some were tentatively removed in Step 1. This gives a broader pool of candidates.
+    for core_hand_str in base_range_list: 
+        if core_hand_str not in HAND_STRENGTH_RANK: continue # Should not happen
+        core_hand_rank = HAND_STRENGTH_RANK[core_hand_str]
+
+        # Define window for neighbors in the SORTED_MASTER_HAND_LIST
+        start_idx = max(0, core_hand_rank - params['neighbor_window_half_size'])
+        end_idx = min(len(SORTED_MASTER_HAND_LIST) -1, core_hand_rank + params['neighbor_window_half_size'])
+
+        for i in range(start_idx, end_idx + 1):
+            neighbor_hand = SORTED_MASTER_HAND_LIST[i]
+            if neighbor_hand == core_hand_str: # Don't consider the core hand itself as a neighbor to add
+                continue
+            if neighbor_hand not in base_range_set: # Only consider adding if not originally in base
+                candidate_neighbors_to_add.add(neighbor_hand)
+
+    # Probabilistically add from candidates
+    added_hands_count = 0
+    max_additions_allowed = int(len(base_range_list) * params['max_added_hands_percentage'])
+    
+    # Shuffle candidates to avoid bias if max_additions_allowed is hit frequently
+    shuffled_candidates = list(candidate_neighbors_to_add)
+    random.shuffle(shuffled_candidates)
+
+    for neighbor_hand in shuffled_candidates:
+        if added_hands_count >= max_additions_allowed:
+            break # Reached cap for additions
+
+        if neighbor_hand in perturbed_hands_set: # Already decided to keep it (e.g. if it was also a core hand)
+            continue
+
+        # Determine if this neighbor is stronger or weaker than the *closest* original core hand
+        # This is a simplification; true prob might depend on which core_hand it's a neighbor to.
+        # For simplicity, just use a general probability based on its relation to *any* core hand.
+        # A more precise way would be to check its rank relative to `core_hand_rank` in the loop above.
+        # Here, we'll just use a blended approach or fixed probability for adding neighbors.
+        
+        # Let's use a generic prob_add_neighbor, or distinguish by its rank relative to the range bounds.
+        # For now, using a simpler approach: if it's a neighbor, use a common probability.
+        # The distinction `prob_add_stronger_neighbor` vs `prob_add_weaker_neighbor` is better applied
+        # during the neighbor identification loop if we need that granularity.
+        # For now, let's average them or pick one as a general `prob_add_any_valid_neighbor`.
+        prob_to_add_this_neighbor = (params['prob_add_stronger_neighbor'] + params['prob_add_weaker_neighbor']) / 2.0
+
+        if random.random() < prob_to_add_this_neighbor:
+            perturbed_hands_set.add(neighbor_hand)
+            added_hands_count += 1
+            
+    return sorted(list(perturbed_hands_set), key=lambda h: HAND_STRENGTH_RANK.get(h, float('inf')))
 
 def generate_player_range_info(
     player_role,
@@ -470,40 +566,6 @@ def generate_player_range_info(
     }
 
 if __name__ == '__main__':
-    print(f"Total 169 hand combos: {len(ALL_169_HAND_COMBINATIONS)}")
-    # print(ALL_169_HAND_COMBINATIONS)
-
-    # Removing older, direct tests for expand_range_shorthand to keep main output cleaner.
-    # Those tests were: 
-    # print("\\n--- Testing expand_range_shorthand ---")
-    # tests = [...]
-    # for test_str in tests: ...
-    # print("\\n--- Testing comma separated (manual split) ---")
-    # compound_test = "AA,KK,QQ+,AJs-AQs,KTs+"
-    # ...
-    # compound_test_2 = "22+,A2s+,K9s+,Q9s+,J9s+,T8s+,97s+,86s+,75s+,65s,54s,A2o+,KTo+,QTo+,JTo+"
-    # ...
-
-    print("\\n--- Displaying Processed Reference Ranges & Their Strength Bounds ---")
-    for role, profiles in PROCESSED_REFERENCE_RANGES.items():
-        print(f"Role: {role}")
-        for r_type, hands in profiles.items():
-            min_r, max_r = get_range_strength_bounds(hands)
-            min_h = SORTED_MASTER_HAND_LIST[min_r] if min_r is not None else "N/A"
-            max_h = SORTED_MASTER_HAND_LIST[max_r] if max_r is not None else "N/A"
-            print(f"  Type: {r_type} ({len(hands)} combos)")
-            print(f"    Hands sample: {hands[:10]}...")
-            print(f"    Strength Ranks: Min={min_r} (Hand: {min_h}), Max={max_r} (Hand: {max_h})")
-
-    print("\\n--- Master Hand List Sample (for strength reference) ---")
-    print(f"Strongest 10: {SORTED_MASTER_HAND_LIST[:10]}")
-    print(f"Weakest 10: {SORTED_MASTER_HAND_LIST[-10:]}")
-    if 'AKs' in HAND_STRENGTH_RANK and '72o' in HAND_STRENGTH_RANK:
-        print(f"Strength rank of AKs: {HAND_STRENGTH_RANK['AKs']}")
-        print(f"Strength rank of T9s: {HAND_STRENGTH_RANK.get('T9s', 'N/A')}")
-        print(f"Strength rank of 22: {HAND_STRENGTH_RANK.get('22', 'N/A')}")
-        print(f"Strength rank of 72o: {HAND_STRENGTH_RANK['72o']}")
-
     print("\\n--- Testing Adaptive Range Selection for Hero ---")
     hero_test_cases = [
         {"role": "OOP", "hand": "AA", "pref": "Balanced"}, # Should likely stay Tight or Balanced
@@ -543,3 +605,18 @@ if __name__ == '__main__':
             range_type_preference=test_case['pref']
         )
         print(f"  Output: Selected Type='{result['range_type_selected']}' (should match pref), Final Hands ({result['final_hands_count']}): {result['final_hands_sample']}...")
+
+    print("\\n--- Testing Perturbation Impact (Example) ---")
+    oop_balanced_base = PROCESSED_REFERENCE_RANGES.get('OOP', {}).get('Balanced', [])
+    if oop_balanced_base:
+        print(f"\nOOP Balanced Base ({len(oop_balanced_base)} hands): {oop_balanced_base[:10]}...")
+        for i in range(3):
+            perturbed_oop_b = _perform_perturbation(oop_balanced_base, 'OOP', 'Balanced')
+            print(f"  Run {i+1} Perturbed ({len(perturbed_oop_b)} hands): {perturbed_oop_b[:10]}...")
+            # Calculate changes
+            added = set(perturbed_oop_b) - set(oop_balanced_base)
+            removed = set(oop_balanced_base) - set(perturbed_oop_b)
+            print(f"    Added ({len(added)}): {list(added)[:5]}...")
+            print(f"    Removed ({len(removed)}): {list(removed)[:5]}...")
+    else:
+        print("\nOOP Balanced base range not found for perturbation test.")
