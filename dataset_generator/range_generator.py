@@ -207,8 +207,60 @@ def expand_range_shorthand(shorthand_str):
     return sorted(list(expanded_hands), key=lambda h: (
         get_rank_index(h[0]), 
         get_rank_index(h[1]),
-        h[2:] # Suffix for sorting: pairs (empty) < offsuit ('o') < suited ('s') or alphabetically by suffix
+        h[2:] # keeps 's' before 'o', and pairs like 'AA' distinct
     ))
+
+
+# --- Reference Range Definitions ---
+
+# These are example shorthand strings. You should tailor these to the specific
+# preflop scenarios and player tendencies you want to model.
+REFERENCE_RANGES_SHORTHAND = {
+    'OOP': { # Out of Position Player
+        'Tight': "QQ+,AKs,AKo",
+        'Balanced': "77+,AJs+,KQs,ATo+,KQo",
+        'Loose': "22+,A2s+,K7s+,Q8s+,J8s+,T7s+,97s+,87s+,A7o+,K9o+,Q9o+,J9o+,T9o"
+    },
+    'IP': { # In Position Player
+        'Tight': "JJ+,AQs+,AQo+",
+        'Balanced': "55+,ATs+,KJs+,QTs+,AJo+,KJo+",
+        'Loose': "22+,A2s+,K5s+,Q8s+,J7s+,T7s+,96s+,86s+,75s+,64s+,53s+,A2o+,K9o+,Q9o+,J9o+,T8o+"
+    }
+}
+
+PROCESSED_REFERENCE_RANGES = {}
+
+def _process_reference_ranges():
+    """
+    Expands the shorthand strings in REFERENCE_RANGES_SHORTHAND
+    and populates PROCESSED_REFERENCE_RANGES with lists of actual hand combinations.
+    This should be called once when the module is initialized.
+    """
+    if PROCESSED_REFERENCE_RANGES: # Avoid reprocessing if called multiple times
+        return
+
+    for player_role, profiles in REFERENCE_RANGES_SHORTHAND.items():
+        PROCESSED_REFERENCE_RANGES[player_role] = {}
+        for range_type, shorthand_str in profiles.items():
+            if not shorthand_str: # Handle empty shorthand string if any
+                PROCESSED_REFERENCE_RANGES[player_role][range_type] = []
+                continue
+            
+            expanded_hands_set = set()
+            for part in shorthand_str.split(','):
+                part_stripped = part.strip()
+                if part_stripped: # Ensure part is not empty after strip
+                    expanded_hands_set.update(expand_range_shorthand(part_stripped))
+            
+            PROCESSED_REFERENCE_RANGES[player_role][range_type] = sorted(list(expanded_hands_set), key=lambda h: (
+                get_rank_index(h[0]),
+                get_rank_index(h[1]),
+                # Check length for pairs like 'AA' which don't have h[2:]
+                h[2:] if len(h) > 2 else '' 
+            ))
+    # print("Debug: PROCESSED_REFERENCE_RANGES populated.")
+
+_process_reference_ranges() # Populate at module load
 
 
 if __name__ == '__main__':
@@ -350,3 +402,10 @@ if __name__ == '__main__':
             print(f"  Expected: {fail['expected']}")
             print(f"  Actual:   {fail['actual']}")
             print("-" * 20)
+
+    print("\\n--- Displaying Processed Reference Ranges ---")
+    for role, profiles in PROCESSED_REFERENCE_RANGES.items():
+        print(f"Role: {role}")
+        for r_type, hands in profiles.items():
+            print(f"  Type: {r_type} ({len(hands)} combos)")
+            print(f"    Hands: {hands[:15]}...") # Print first 15 hands as a sample
