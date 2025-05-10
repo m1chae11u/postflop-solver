@@ -1,6 +1,6 @@
 import csv
 import os
-import random # Still needed for range_generator's random choices
+import random
 from typing import List, Dict, Any, Tuple, Union
 
 # Assuming range_generator.py is in the same directory (dataset_generator)
@@ -43,7 +43,7 @@ def process_input_csv(input_csv_path, output_csv_path, num_rows_to_process=None)
     try:
         with open(input_csv_path, mode='r', newline='', encoding='utf-8') as infile:
             reader = csv.DictReader(infile)
-            fieldnames = reader.fieldnames + ['oop_range_str', 'oop_range_type_selected', 'ip_range_str', 'ip_range_type_selected', 'hero_hand_parsed_str']
+            fieldnames = reader.fieldnames + ['oop_range_str', 'oop_range_type_selected', 'ip_range_str', 'ip_range_type_selected']
             
             for i, row in enumerate(reader):
                 if num_rows_to_process is not None and i >= num_rows_to_process:

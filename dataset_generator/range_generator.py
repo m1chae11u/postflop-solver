@@ -658,7 +658,6 @@ def augment_gamestate_with_ranges(gamestate_data, hero_is_oop_field='hero_is_oop
     augmented_gs['oop_range_type_selected'] = oop_range_info['range_type_selected']
     augmented_gs['ip_range_str'] = ip_range_info['final_range_str']
     augmented_gs['ip_range_type_selected'] = ip_range_info['range_type_selected']
-    augmented_gs['hero_hand_parsed_str'] = hero_hand_str
     
     return augmented_gs
 
