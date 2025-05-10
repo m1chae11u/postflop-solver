@@ -49,14 +49,14 @@ def expand_range_shorthand(shorthand_str):
         "AQ+" -> ["AQs", "AQo", "AKs", "AKo"] (Covers both suited and offsuit if not specified)
         "77-99" -> ["77", "88", "99"]
         "A2s-A5s" -> ["A2s", "A3s", "A4s", "A5s"]
-        "QTs-KJs" -> ["QTs", "JTs", "KJs"] (assumes kicker increases with primary card)
+        "QTs-KJs" -> QTs, KJs - this interpretation is tricky. Current support: KTs-KQs -> KTs, KJs, KQs
 
     Handles individual hands like "AKs" or "77" correctly by returning them in a list.
     Note: Complex mixed ranges like "JJ+, AQs+, KQo" should be comma-separated
           and processed by splitting first, then calling this function on each part.
           This function handles one shorthand component at a time.
     """
-    expanded_hands = set() # Use a set to avoid duplicates from overlapping shorthand like "AQ+"
+    expanded_hands = set() # Use a set to avoid duplicates
 
     if not shorthand_str:
         return []
@@ -69,162 +69,121 @@ def expand_range_shorthand(shorthand_str):
     if len(shorthand_str) == 3 and shorthand_str.endswith('+') and shorthand_str[0] == shorthand_str[1]: # e.g., "JJ+"
         pair_rank_char = shorthand_str[0]
         pair_rank_idx = get_rank_index(pair_rank_char)
-        for i in range(pair_rank_idx, -1, -1): # Iterate upwards in rank (lower index)
+        # Iterate upwards in rank (lower index means stronger rank)
+        for i in range(pair_rank_idx, -1, -1):
             expanded_hands.add(f"{RANKS[i]}{RANKS[i]}")
     elif len(shorthand_str) == 5 and shorthand_str[2] == '-' and shorthand_str[0]==shorthand_str[1] and shorthand_str[3]==shorthand_str[4]: # e.g., "77-99"
-        rank_char_start = shorthand_str[0]
-        rank_char_end = shorthand_str[3]
-        idx_start = get_rank_index(rank_char_start) # Higher index (e.g. 9 for "9")
-        idx_end = get_rank_index(rank_char_end)     # Lower index (e.g. 7 for "7")
+        rank_char_1 = shorthand_str[0]
+        rank_char_2 = shorthand_str[3]
+        idx_1 = get_rank_index(rank_char_1)
+        idx_2 = get_rank_index(rank_char_2)
         
-        # Ensure start_idx is for the lower rank in "77-99" meaning 7 is start, 9 is end
-        # Our RANKS is ['A', ..., '2'], so A has index 0, 2 has index 12.
-        # "99-77" is more natural for rank indices
-        
-        # If "77-99", RANKS.index('7') > RANKS.index('9')
-        # We want to iterate from the rank of '7' up to '9'
-        actual_start_idx = min(idx_start, idx_end)
-        actual_end_idx = max(idx_start, idx_end)
+        # Iterate from the lower rank (higher index) to the higher rank (lower index)
+        # or vice-versa, min/max handles order e.g. "99-77" or "77-99"
+        start_loop_idx = min(idx_1, idx_2)
+        end_loop_idx = max(idx_1, idx_2)
 
-        for i in range(actual_start_idx, actual_end_idx + 1):
+        for i in range(start_loop_idx, end_loop_idx + 1):
             expanded_hands.add(f"{RANKS[i]}{RANKS[i]}")
 
     # Case 2: Ax+ type notation (e.g., "A9s+", "KTo+", "AQ+")
     # Covers XYo, XYs, XY+ (meaning both s and o)
-    elif shorthand_str.endswith('+'):
+    # This case assumes shorthand_str[0] is the higher ranked card of the two initial ones.
+    elif shorthand_str.endswith('+') and len(shorthand_str) >= 2 and shorthand_str[0] != shorthand_str[1]: # Avoids re-processing pairs like "AA+"
         base = shorthand_str[:-1] # "A9s", "KTo", "AQ"
         
-        rank1_char = base[0]
-        rank2_char = base[1]
-        r1_idx = get_rank_index(rank1_char)
+        primary_rank_char = base[0]
+        base_kicker_char = base[1]
+        primary_rank_idx = get_rank_index(primary_rank_char)
 
-        # Determine if specific suit type is given (s or o)
         stype = None
         if len(base) == 3: # "A9s" or "KTo"
             stype = base[2]
             if stype not in HAND_TYPES:
-                raise ValueError(f"Invalid suit type in shorthand: {shorthand_str}")
-        elif len(base) != 2: # "AQ"
-             raise ValueError(f"Invalid shorthand format for '+': {shorthand_str}")
+                # This could be an error, or we could try to infer if it's a typo for a rank.
+                # For now, let's assume it's an invalid suit type.
+                print(f"Warning: Invalid suit type '{stype}' in shorthand: {shorthand_str}")
+                return [] # Or raise error
+        elif len(base) != 2: # e.g. from "A+" or something too short
+            print(f"Warning: Invalid base for '+' shorthand: {base} from {shorthand_str}")
+            return [] # Or raise error
+        
+        base_kicker_idx = get_rank_index(base_kicker_char)
 
-        r2_idx_base = get_rank_index(rank2_char)
+        if base_kicker_idx <= primary_rank_idx: # Kicker is stronger or same as primary card (e.g. "AAs+" or "KAs+")
+            print(f"Warning: Kicker '{base_kicker_char}' not weaker than primary '{primary_rank_char}' in {shorthand_str}")
+            # Potentially handle this as an error or specific case if e.g. KAs+ should mean AKs.
+            # For now, returning empty as it's ambiguous or implies a pair, which is Case 1.
+            if primary_rank_char == base_kicker_char and stype is None: # e.g. AA+ (no s/o) should be JJ+
+                 # This should have been caught by Case 1 if it was e.g. "AA+" format. If it's "AAo+", it's invalid.
+                 pass # Let it fall through to a general warning if nothing is added.
+            else:
+                return []
 
-        # Iterate kicker upwards
-        for r2_idx_curr in range(r2_idx_base, r1_idx): # Kicker cannot be >= card1 rank
-            current_rank1_char = RANKS[r1_idx] # Stays the same, e.g. 'A' in "A9s+"
-            current_rank2_char = RANKS[r2_idx_curr] # Changes, e.g. '9', 'T', 'J', 'Q', 'K' (for A)
-
-            # Ensure canonical order if r1_idx was not 0 (Ace)
-            # For "KJs+", rank1 is K, rank2 is J. Kicker (J) iterates up to Q (but not K).
-            # This loop structure implies r1 is fixed and r2 iterates up to r1.
-            # This fits "A9s+" -> A9s, ATs, AJs, AQs, AKs
-            # And "KJs+" -> KJs, KQs (r2_idx_curr goes from J_idx up to K_idx-1)
-            # And "T8o+" -> T8o, T9o
-
-            # Check for rank1_char == rank2_char: This shouldn't happen if r2_idx_curr < r1_idx
-            if current_rank1_char == current_rank2_char:
-                continue
+        # Iterate kicker upwards in strength (downwards in index) from base_kicker up to (but not including) primary_rank
+        for k_idx in range(base_kicker_idx, primary_rank_idx, -1):
+            current_kicker_char = RANKS[k_idx]
             
-            # Ensure order for string: higher rank first
-            hr_char, lr_char = sorted([current_rank1_char, current_rank2_char], key=get_rank_index)
+            # sorted() ensures canonical order (higher rank first)
+            hr_char, lr_char = sorted([primary_rank_char, current_kicker_char], key=get_rank_index)
 
-
-            if stype: # "A9s" or "KTo" type
+            if stype: # Specific suit type given e.g. "A9s+"
                 expanded_hands.add(f"{hr_char}{lr_char}{stype}")
-            else: # "AQ+" type, add both suited and offsuit
+            else: # No suit type given e.g. "AQ+", add both suited and offsuit
                 expanded_hands.add(f"{hr_char}{lr_char}s")
                 expanded_hands.add(f"{hr_char}{lr_char}o")
                 
-    # Case 3: Range between two non-pair hands (e.g., "A2s-A5s", "T7o-T9o", "QJs-KJs")
-    elif len(shorthand_str) >= 7 and shorthand_str[3] == '-': # e.g. "A2s-A5s" or "T9o-JTo" (more complex)
-        start_hand = shorthand_str[:3]
-        end_hand = shorthand_str[4:]
+    # Case 3: Range between two non-pair hands (e.g., "A2s-A5s", "KTs-KQs")
+    # Assumes the primary card is fixed, and the kicker varies.
+    elif '-' in shorthand_str and len(shorthand_str) >= 7 : # e.g. "A2s-A5s"
+        parts = shorthand_str.split('-')
+        if len(parts) == 2:
+            start_hand_sh = parts[0]
+            end_hand_sh = parts[1]
 
-        if not (len(start_hand) == 3 and len(end_hand) == 3 and start_hand[2] == end_hand[2]):
-            raise ValueError(f"Range shorthand like 'A2s-A5s' must have matching suit types. Got: {shorthand_str}")
-        
-        stype = start_hand[2]
-        if stype not in HAND_TYPES:
-            raise ValueError(f"Invalid suit type in range: {shorthand_str}")
+            if not (len(start_hand_sh) == 3 and len(end_hand_sh) == 3 and start_hand_sh[0] == end_hand_sh[0] and start_hand_sh[2] == end_hand_sh[2]):
+                # This condition specifically checks for A2s-A5s or KTs-KQs type (fixed primary, fixed suit type)
+                # It doesn't support T8s-QJs yet easily.
+                print(f"Warning: Range shorthand like '{shorthand_str}' currently expects fixed primary card and suit type (e.g. A2s-A5s or KTs-KQs).")
+                # Attempt to process if they are single valid hands (e.g. AKs-AQo - no, this won't work here)
+            else:
+                stype = start_hand_sh[2]
+                if stype not in HAND_TYPES:
+                    print(f"Warning: Invalid suit type '{stype}' in range: {shorthand_str}")
+                    return []
 
-        r1_start_char, r2_start_char = start_hand[0], start_hand[1]
-        r1_end_char, r2_end_char = end_hand[0], end_hand[1]
+                fixed_primary_char = start_hand_sh[0]
+                kicker1_char = start_hand_sh[1]
+                kicker2_char = end_hand_sh[1]
 
-        r1_start_idx, r2_start_idx = get_rank_index(r1_start_char), get_rank_index(r2_start_char)
-        r1_end_idx, r2_end_idx = get_rank_index(r1_end_char), get_rank_index(r2_end_char)
+                fixed_primary_idx = get_rank_index(fixed_primary_char)
+                kicker1_idx = get_rank_index(kicker1_char)
+                kicker2_idx = get_rank_index(kicker2_char)
 
-        # This logic assumes one rank changes while the other stays the same OR both change in a suited connector way
-        # Example 1: "A2s-A5s" (A stays, kicker changes 2->5)
-        if r1_start_char == r1_end_char:
-            fixed_rank_char = r1_start_char
-            kicker_idx_loop_start = min(r2_start_idx, r2_end_idx)
-            kicker_idx_loop_end = max(r2_start_idx, r2_end_idx)
-            fixed_rank_idx = get_rank_index(fixed_rank_char)
+                # Iterate kicker through the specified range
+                # Ensure kicker is not same rank as primary_fixed_card
+                loop_kicker_start_idx = min(kicker1_idx, kicker2_idx)
+                loop_kicker_end_idx = max(kicker1_idx, kicker2_idx)
 
-            for k_idx in range(kicker_idx_loop_start, kicker_idx_loop_end + 1):
-                if k_idx >= fixed_rank_idx : # Kicker cannot be same or higher rank (unless it's the other fixed card)
-                    continue 
-                hr_char, lr_char = sorted([fixed_rank_char, RANKS[k_idx]], key=get_rank_index)
-                expanded_hands.add(f"{hr_char}{lr_char}{stype}")
-        
-        # Example 2: "T8s-QJs" (Suited connectors: T8s, J9s, QJs - this is simplified for now)
-        # A more robust way for suited connectors: T8s, 97s, etc. or T8s, J8s, Q8s
-        # Let's handle the case where the primary card increases and kicker increases one step:
-        # e.g. QJs-KJs means QJs, KJs -- no, this is wrong. It should be QJs, KQs. No, wait.
-        # "QTs-KJs" -> QTs, KJs means QTs (QJ, QK), JTs (JK), KJs. This gets complex quickly.
-        # For "T8s-QJs", if interpreted as T8s, J9s, QJs:
-        elif abs(r1_start_idx - r1_end_idx) == abs(r2_start_idx - r2_end_idx) and \
-             abs(r1_start_idx-r2_start_idx) == 1 and abs(r1_end_idx-r2_end_idx) == 1: # Connectors
-            
-            # Iterate from the overall "lower" hand to "higher" hand
-            # e.g. T8s to QJs. T is rank 4, 8 is rank 6. Q is rank 2, J is rank 3.
-            # This means we are stepping r1 and r2 together.
-            
-            current_r1_idx = min(r1_start_idx, r1_end_idx) # "lowest" primary rank char index
-            end_r1_idx = max(r1_start_idx, r1_end_idx)
-            
-            # Determine step direction for kicker based on primary rank
-            # If QJs-T8s (Q->T, J->8) or T8s-QJs (T->Q, 8->J)
-            # This assumes they are same-distance gappers or connectors
-            
-            # Simplified: Assuming r1_start/r2_start is the "lower" of the two.
-            # User should input as T8s-QJs, not QJs-T8s for this logic to be simple.
-            
-            # Let's use a simpler interpretation for A2s-A5s which is common.
-            # And for "QTs-KJs" -> if this means primary card Q->K, kicker T->J
-            # If the ranks are consecutive and kicker is one less.
-            # This part of shorthand parsing can get very ambiguous.
-            # For now, focusing on the "A2s-A5s" type (fixed primary, kicker range).
-            # And "77-99" type (done above).
+                for k_idx in range(loop_kicker_start_idx, loop_kicker_end_idx + 1):
+                    if k_idx == fixed_primary_idx: # Avoid forming a pair like AA from A2s-AAs
+                        continue
+                    
+                    current_kicker_char = RANKS[k_idx]
+                    hr_char, lr_char = sorted([fixed_primary_char, current_kicker_char], key=get_rank_index)
+                    expanded_hands.add(f"{hr_char}{lr_char}{stype}")
+        else:
+             print(f"Warning: Invalid format for '-' range: {shorthand_str}")
 
-            # The "QTs-KJs" -> QTs, JTs, KTs or QTs, QJs, QKs is hard to infer.
-            # Let's assume for now it's not supported beyond fixed primary or fixed kicker.
-            # So if r2_start_char == r2_end_char (fixed kicker, primary changes):
-            # e.g., "T9s-Q9s"
-            print(f"Note: Complex range shorthand like '{shorthand_str}' (changing both ranks in arbitrary ways) has limited support beyond fixed primary/kicker.")
-
-
-    if not expanded_hands:
-        # If nothing expanded, it might be a single hand or invalid.
-        # We already checked for single valid hands.
-        # It could be part of a comma separated list.
-        # For now, if no patterns match and it's not a single valid hand, it's an error for this function.
-        # However, a higher-level function will split by comma.
-        # So, if "AKs,QQ" is passed, "AKs" will be handled, then "QQ".
-        # If "XYZ" is passed, it won't match.
-        # We assume if we reach here and expanded_hands is empty, the shorthand_str was not recognized.
-        # For safety, let's re-check if it's a valid single hand if no patterns matched.
-        if shorthand_str in ALL_169_HAND_COMBINATIONS:
-             expanded_hands.add(shorthand_str)
-        elif shorthand_str: # only raise if it's not an empty string from split
-            print(f"Warning: Shorthand component '{shorthand_str}' not fully recognized or is invalid.")
-            # raise ValueError(f"Shorthand component '{shorthand_str}' not recognized or is invalid.")
-
+    # Final check and warning if no hands were generated by patterns above
+    if not expanded_hands and shorthand_str not in ALL_169_HAND_COMBINATIONS:
+        # If it was not a single valid hand and no patterns matched or pattern matching failed silently.
+        print(f"Warning: Shorthand component '{shorthand_str}' not recognized or fully expanded.")
 
     return sorted(list(expanded_hands), key=lambda h: (
         get_rank_index(h[0]), 
         get_rank_index(h[1]),
-        h[2:] # keeps 's' before 'o', and pairs like 'AA' distinct
+        h[2:] # Suffix for sorting: pairs (empty) < offsuit ('o') < suited ('s') or alphabetically by suffix
     ))
 
 
