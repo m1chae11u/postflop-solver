@@ -1,0 +1,67 @@
+## Design Process for `range_generator.py` Module
+
+This document outlines the iterative design and implementation process for the `range_generator.py` module, which is responsible for generating poker hand ranges for game state analysis.
+
+**Objective:** To create a flexible system for assigning poker hand ranges (OOP - Out of Position, IP - In Position) to given postflop gamestates, allowing for different range compositions (Tight, Balanced, Loose) and ensuring the hero's actual hand is consistently represented.
+
+**Initial Problem:** The need to generate varied and realistic preflop ranges to feed into a postflop solver, without implementing a full preflop simulation engine. The focus shifted to defining range archetypes and applying them to existing or generated gamestates.
+
+**Key Design Phases and Components:**
+
+1.  **Core Hand Representation & Utilities (Initial Setup):**
+    *   **Constants:** Defined `RANKS` (A, K, Q,...2) and `HAND_TYPES` ('s' for suited, 'o' for offsuit).
+    *   **169 Hand Combinations:** Implemented `_initialize_169_hands()` to generate and store `ALL_169_HAND_COMBINATIONS` (e.g., "AA", "AKs", "T9o"). This list is foundational for all range operations.
+    *   **Rank Indexing:** `get_rank_index(rank_char)` utility created for easier rank comparisons.
+    *   **Shorthand Expansion:**
+        *   Recognized the need to work with common poker shorthand for ranges (e.g., "JJ+", "A9s+", "77-99").
+        *   Implemented `expand_range_shorthand(shorthand_str)` to convert individual shorthand components into explicit lists of hand strings. This function handles various notations like `+` for "and stronger," `-` for ranges of pairs or kickers, and general `XY+` (implying both suited and offsuit versions).
+        *   The design allows for complex range strings (e.g., "AA,KK,AQs+,KJs") to be processed by splitting by comma and calling the expansion function on each part.
+
+2.  **Reference Range Definitions:**
+    *   **Concept:** Established the idea of "reference" or "archetype" ranges for different player roles (OOP, IP) and strategic styles (Tight, Balanced, Loose).
+    *   **`REFERENCE_RANGES_SHORTHAND`:** A dictionary was defined to store these archetype ranges using the poker shorthand strings. This allows for easy definition and modification of the base ranges.
+        *   Example: `REFERENCE_RANGES_SHORTHAND['OOP']['Tight'] = "QQ+,AKs,AKo"`
+    *   **`PROCESSED_REFERENCE_RANGES`:** Implemented `_process_reference_ranges()` to iterate through `REFERENCE_RANGES_SHORTHAND`, use `expand_range_shorthand` on each part, and store the resulting lists of concrete hand strings in `PROCESSED_REFERENCE_RANGES`. This pre-processing step makes lookups faster and centralizes the expansion logic. This dictionary stores the actual lists of hands for each profile (e.g., `PROCESSED_REFERENCE_RANGES['OOP']['Tight']` holds `['AA', 'AKo', 'AKs', 'QQ']`).
+
+3.  **Hand Strength Quantification for Adaptive Logic:**
+    *   **Need:** To compare the hero's actual hand against the "strength" of a range category, a way to order or rank all 169 hands was needed.
+    *   **`SORTED_MASTER_HAND_LIST`:** `ALL_169_HAND_COMBINATIONS` is sorted using a canonical poker hand sorting key (rank1, rank2, suit type) to create a definitive list from strongest (AA) to weakest (72o).
+    *   **`HAND_STRENGTH_RANK`:** A dictionary mapping each hand string in `SORTED_MASTER_HAND_LIST` to its numerical rank (0 for strongest, 168 for weakest).
+    *   **`get_range_strength_bounds(range_list)`:** A utility function to find the minimum (strongest) and maximum (weakest) strength ranks of hands within a given list of hands, using `HAND_STRENGTH_RANK`.
+
+4.  **Adaptive Range Selection for Hero:**
+    *   **Goal:** To ensure the range type assigned to the hero is reasonably consistent with their actual holding, rather than being purely random or fixed.
+    *   **Constants:** Defined `RANGE_TYPE_ORDER` (['Tight', 'Balanced', 'Loose']) for directional adjustments, and `ACCEPTABLE_WEAKNESS_OFFSET` / `ACCEPTABLE_STRENGTH_OFFSET` to define how far the hero's hand can be from a range category's bounds before an adjustment is triggered.
+    *   **`determine_hero_range_type_and_base_range(...)`:**
+        *   Takes the hero's hand string, player role, and an initial range type preference.
+        *   Compares the hero's hand strength rank against the bounds of the reference range for the current type.
+        *   If the hero's hand is too weak for the current type (beyond `weakness_offset`), it attempts to shift to a looser range type.
+        *   If too strong (beyond `strength_offset`), it attempts to shift to a tighter range type.
+        *   The logic allows for at least one such adjustment. The iteration is capped to avoid issues, and it settles on a type.
+    *   **Hero Hand Inclusion (Safety Net):** A separate step ensures that after the base range is selected (and eventually perturbed), the hero's actual hand string is force-included in the final list if not already present. This guarantees the hero's hand is always part of their assigned range for the solver.
+
+5.  **Perturbation Logic (Stubbed for now):**
+    *   **Concept:** To introduce slight variations into the base ranges to create more diverse and realistic range compositions beyond the fixed Tight, Balanced, and Loose archetypes.
+    *   **`_perform_perturbation(base_range_list, player_role, range_type)`:** This function is defined as a placeholder. Currently, it returns a copy of the base range without modification. The intention is to add logic here to:
+        *   Potentially remove some hands from the `base_range_list` with a certain probability.
+        *   Potentially add some "nearby" plausible hands (not in the `base_range_list`) with a certain probability.
+        *   The degree and nature of perturbation could depend on `player_role` and `range_type`.
+
+6.  **Main Range Generation Function:**
+    *   **`generate_player_range_info(...)`:**
+        *   Serves as the primary interface.
+        *   Takes `player_role`, `is_hero` (boolean), `hero_hand_str_if_any`, and a `range_type_preference`.
+        *   If `is_hero`, it uses `determine_hero_range_type_and_base_range` for adaptive selection.
+        *   If not `is_hero` (i.e., for the villain), it uses `range_type_preference` directly.
+        *   Calls the (stubbed) `_perform_perturbation`.
+        *   Applies the hero hand force-inclusion.
+        *   Formats the final list of hands into a comma-separated string for the solver.
+        *   Returns a dictionary containing all relevant details (`range_type_selected`, hand counts, samples, final string).
+
+**Current Status & Next Steps (as of this log entry):**
+*   Core utilities for hand representation, shorthand expansion, and reference range processing are implemented and tested.
+*   Adaptive range selection for the hero (adjusting the base `range_type`) is implemented.
+*   The hero's hand is guaranteed to be in their final range list.
+*   The perturbation logic (`_perform_perturbation`) is the next major component to be fully implemented.
+
+This iterative approach has allowed for foundational elements to be built and validated before adding more complex layers like adaptive selection and perturbation. 
