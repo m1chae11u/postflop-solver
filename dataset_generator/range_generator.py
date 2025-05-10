@@ -620,3 +620,189 @@ if __name__ == '__main__':
             print(f"    Removed ({len(removed)}): {list(removed)[:5]}...")
     else:
         print("\nOOP Balanced base range not found for perturbation test.")
+
+
+# --- Gamestate Processing ---
+
+def holding_to_hand_str(card1_repr, card2_repr):
+    """
+    Converts a hero's holding into the 169-hand string format (e.g., "AKs", "77").
+    
+    Args:
+        card1_repr: Representation of the first card. 
+                    Can be a tuple like ('A', 's') or a string like "As".
+        card2_repr: Representation of the second card.
+
+    Returns:
+        The 169-hand string (e.g., "AKo", "77").
+    """
+    def parse_card_repr(card_r):
+        if isinstance(card_r, str) and len(card_r) == 2:
+            rank_char = card_r[0].upper()
+            suit_char = card_r[1].lower()
+            if rank_char not in RANKS or suit_char not in SUITS:
+                raise ValueError(f"Invalid card string format: '{card_r}'")
+            return rank_char, suit_char
+        elif isinstance(card_r, tuple) and len(card_r) == 2:
+            rank_char = str(card_r[0]).upper()
+            suit_char = str(card_r[1]).lower()
+            if rank_char not in RANKS or suit_char not in SUITS:
+                raise ValueError(f"Invalid card tuple format: {card_r}")
+            return rank_char, suit_char
+        elif hasattr(card_r, 'rank') and hasattr(card_r, 'suit'): # For card objects
+            rank_char = str(card_r.rank).upper()
+            suit_char = str(card_r.suit).lower()
+            # Assuming rank and suit attributes are already validated or in expected format
+            if rank_char not in RANKS or suit_char not in SUITS:
+                raise ValueError(f"Invalid card object properties: rank='{rank_char}', suit='{suit_char}'")
+            return rank_char, suit_char
+        else:
+            raise ValueError(f"Unsupported card representation: {card_r}")
+
+    r1_char, s1_char = parse_card_repr(card1_repr)
+    r2_char, s2_char = parse_card_repr(card2_repr)
+
+    # Use get_rank_index to ensure canonical order (higher rank first in string)
+    idx1, idx2 = get_rank_index(r1_char), get_rank_index(r2_char)
+    
+    # Assign characters based on sorted rank index (lower index is stronger rank)
+    # RANKS is [A, K, Q,...], index 0 is 'A'. So min index is stronger.
+    char1_sorted = RANKS[min(idx1, idx2)] 
+    char2_sorted = RANKS[max(idx1, idx2)]
+
+    if char1_sorted == char2_sorted: # Pocket pair
+        return f"{char1_sorted}{char2_sorted}"
+    
+    suited_char = 's' if s1_char == s2_char else 'o'
+    return f"{char1_sorted}{char2_sorted}{suited_char}"
+
+
+def augment_gamestate_with_ranges(gamestate_data, hero_is_oop_field='hero_is_oop', hero_holding_field='hero_holding'):
+    """
+    Augments a single gamestate dictionary with generated OOP and IP range strings.
+
+    Args:
+        gamestate_data: A dictionary representing a single gamestate.
+                        Expected to have fields like hero_is_oop_field and hero_holding_field.
+        hero_is_oop_field: The key in gamestate_data that indicates if hero is OOP (boolean).
+        hero_holding_field: The key in gamestate_data for hero's holding.
+                            Expected to be a tuple/list of two card representations 
+                            (e.g., [('A','s'), ('K','h')] or ["As", "Kh"]).
+
+    Returns:
+        A new dictionary with added 'oop_range_str', 'ip_range_str', 
+        'oop_range_type_selected', 'ip_range_type_selected'.
+    """
+    # --- 1. Extract relevant info from gs_data --- 
+    if hero_is_oop_field not in gamestate_data:
+        raise ValueError(f"Gamestate data missing '{hero_is_oop_field}' field.")
+    if hero_holding_field not in gamestate_data:
+        raise ValueError(f"Gamestate data missing '{hero_holding_field}' field.")
+
+    hero_is_oop = gamestate_data[hero_is_oop_field]
+    hero_holding_raw = gamestate_data[hero_holding_field]
+
+    if not isinstance(hero_holding_raw, (list, tuple)) or len(hero_holding_raw) != 2:
+        raise ValueError(f"Field '{hero_holding_field}' must be a list/tuple of two card representations.")
+
+    # --- 2. Convert hero holding --- 
+    hero_hand_str = holding_to_hand_str(hero_holding_raw[0], hero_holding_raw[1])
+    
+    # --- 3. Determine Player Roles --- 
+    oop_player_role_const = 'OOP' # Using constant 'OOP' for clarity
+    ip_player_role_const = 'IP'   # Using constant 'IP' for clarity
+    
+    hero_actual_role = oop_player_role_const if hero_is_oop else ip_player_role_const
+    villain_actual_role = ip_player_role_const if hero_is_oop else oop_player_role_const
+
+    # --- 4. Choose initial range type preferences (Randomly for this example) --- 
+    # For the player who is the hero, their preference will be adapted.
+    # For the villain, this preference will be their actual range type.
+    oop_initial_pref = random.choice(RANGE_TYPE_ORDER)
+    ip_initial_pref = random.choice(RANGE_TYPE_ORDER)
+
+    # --- 5. Generate OOP Range --- 
+    oop_range_info = generate_player_range_info(
+        player_role=oop_player_role_const,
+        is_hero=(hero_actual_role == oop_player_role_const),
+        hero_hand_str_if_any=hero_hand_str if (hero_actual_role == oop_player_role_const) else None,
+        range_type_preference=oop_initial_pref
+    )
+    
+    # --- 6. Generate IP Range --- 
+    ip_range_info = generate_player_range_info(
+        player_role=ip_player_role_const,
+        is_hero=(hero_actual_role == ip_player_role_const),
+        hero_hand_str_if_any=hero_hand_str if (hero_actual_role == ip_player_role_const) else None,
+        range_type_preference=ip_initial_pref
+    )
+
+    # --- 7. Augment gamestate --- 
+    augmented_gs = gamestate_data.copy()
+    augmented_gs['oop_range_str'] = oop_range_info['final_range_str']
+    augmented_gs['oop_range_type_selected'] = oop_range_info['range_type_selected']
+    augmented_gs['ip_range_str'] = ip_range_info['final_range_str']
+    augmented_gs['ip_range_type_selected'] = ip_range_info['range_type_selected']
+    augmented_gs['hero_hand_parsed_str'] = hero_hand_str # Store for easy reference
+    
+    return augmented_gs
+
+def process_gamestate_dataset(list_of_gamestate_dicts, hero_is_oop_field='hero_is_oop', hero_holding_field='hero_holding'):
+    """
+    Processes a list of gamestate dictionaries, augmenting each with range info.
+    """
+    augmented_dataset = []
+    for i, gs_data in enumerate(list_of_gamestate_dicts):
+        try:
+            # print(f"Processing gamestate {i+1}...")
+            augmented_gs = augment_gamestate_with_ranges(gs_data, hero_is_oop_field, hero_holding_field)
+            augmented_dataset.append(augmented_gs)
+        except Exception as e:
+            print(f"Error processing gamestate {i+1} (data: {gs_data}): {e}")
+            # Optionally, append original data or skip, or append with error flags
+            # For now, we skip problematic ones or let error propagate if critical
+    return augmented_dataset
+
+
+if __name__ == '__main__':
+    print("\\n--- Testing Full Gamestate Augmentation ---")
+    dummy_gamestates = [
+        {
+            'id': 1,
+            'flop': "AhKdQs", 
+            'pot_size': 10.0,
+            'hero_is_oop': True,
+            'hero_holding': [('A','c'), ('K','s')] # AKo
+        },
+        {
+            'id': 2,
+            'flop': "Ts9s8h",
+            'pot_size': 6.5,
+            'hero_is_oop': False,
+            'hero_holding': ["Th", "9h"] # T9o (using string card repr)
+        },
+        {
+            'id': 3,
+            'flop': "7c7d2s",
+            'pot_size': 20.2,
+            'hero_is_oop': True,
+            'hero_holding': [('7','h'), ('2','c')] # 72o 
+        },
+        {
+            'id': 4,
+            'flop': "QcJcTc",
+            'pot_size': 15.0,
+            'hero_is_oop': False,
+            'hero_holding': ["Ac", "Kc"] # AKs
+        }
+    ]
+
+    augmented_dummy_data = process_gamestate_dataset(dummy_gamestates)
+
+    for i, aug_gs in enumerate(augmented_dummy_data):
+        print(f"\nProcessed Gamestate ID: {aug_gs.get('id', i+1)}")
+        print(f"  Flop: {aug_gs['flop']}")
+        print(f"  Hero Holding: {aug_gs['hero_holding']} -> Parsed: {aug_gs['hero_hand_parsed_str']}")
+        print(f"  Hero is OOP: {aug_gs['hero_is_oop']}")
+        print(f"  OOP Range ({aug_gs['oop_range_type_selected']}): {aug_gs['oop_range_str'][:60]}...")
+        print(f"  IP Range ({aug_gs['ip_range_type_selected']}): {aug_gs['ip_range_str'][:60]}...")
