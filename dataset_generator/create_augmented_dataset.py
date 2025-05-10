@@ -113,11 +113,10 @@ if __name__ == '__main__':
     
     sample_output_csv = os.path.join(OUTPUT_DIR, 'augmented_sample_output.csv')
 
-    full_output_csv = os.path.join(OUTPUT_DIR, 'augmented_full_dataset.csv')
+    full_output_csv = os.path.join(OUTPUT_DIR, 'ranges_postflop_500k_train_set_game_scenario_information.csv')
 
-    print(f"Project Root (estimated): {PROJECT_ROOT}")
     print(f"Full input CSV path: {full_input_csv}")
-    print(f"Sample output CSV path: {sample_output_csv}")
+    print(f"Output CSV path: {sample_output_csv}")
 
     print("\n--- Processing Full Dataset (this might take a while) ---")
     process_input_csv(
