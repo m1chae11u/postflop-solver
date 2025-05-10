@@ -1,95 +1,41 @@
-# postflop-solver
+# Poker AI with Internal Search Distillation
 
-> [!IMPORTANT]
-> **As of October 2023, I have started developing a poker solver as a business and have decided to suspend development of this open-source project. See [this issue] for more information.**
+This repository is dedicated to the development of a sophisticated poker-playing AI leveraging Large Language Models (LLMs). The core methodology, outlined in `internal_search/poker_internal_search_methodology.txt`, focuses on "Internal Search Distillation."
 
-[this issue]: https://github.com/b-inary/postflop-solver/issues/46
+## Project Goal
 
----
+The primary goal is to train an LLM to simulate the reasoning process of a game-theoretic poker solver. Instead of performing computationally intensive rollouts during inference, the LLM learns to predict the outcomes of deep strategic explorations by generating a structured, linearized textual "thought process." This trace is annotated with Expected Value (EV) estimates derived from solver data during its training phase.
 
-An open-source postflop solver library written in Rust
+The LLM aims to:
+1.  Generate a linearized search trace representing its step-by-step reasoning.
+2.  Utilize special tokens and keywords to delineate decision points, chance events, and actions in an interpretable format.
+3.  Propose strategically relevant actions for "Hero" (the AI player).
+4.  Estimate the game-theoretic EV for each proposed action, trained on solver data.
+5.  Predict plausible opponent responses and their impact on EV.
+6.  Handle stochastic elements like card dealing through "Outcome Abstraction," where the LLM reasons about strategically significant categories of card outcomes rather than individual cards.
+7.  Learn to approximate Bellman-like value propagation to make decisions based on multi-step lookahead.
 
-Documentation: https://b-inary.github.io/postflop_solver/postflop_solver/
+## Key Components
 
-**Related repositories**
-- Web app (WASM Postflop): https://github.com/b-inary/wasm-postflop
-- Desktop app (Desktop Postflop): https://github.com/b-inary/desktop-postflop
+### 1. Internal Search Methodology
+The LLM is trained to generate a textual trace that emulates the internal search process of a poker solver. This trace includes:
+*   **Hero Decision Nodes:** Proposals of actions and their immediate EV estimates.
+*   **Opponent Decision Nodes:** Predictions of opponent responses and state transitions.
+*   **Chance Nodes:** Representation of card dealing using abstracted outcomes.
+*   **Selective Expansion:** Strategies to focus the search on the most salient lines of play, guided by initial EV estimates and solver-derived opponent response frequencies.
 
-**Note:**
-The primary purpose of this library is to serve as a backend engine for the GUI applications ([WASM Postflop] and [Desktop Postflop]).
-The direct use of this library by the users/developers is not a critical purpose by design.
-Therefore, breaking changes are often made without version changes.
-See [CHANGES.md](CHANGES.md) for details about breaking changes.
+### 2. Dataset Generation
+To train the LLM, a comprehensive dataset of poker game scenarios is required. This involves:
+*   Using a high-quality poker solver to generate optimal strategies and EV data for numerous game situations.
+*   Formatting this solver data into the linearized search trace format that the LLM will learn to produce.
+*   **Range Generation (`dataset_generator_design_doc.txt`):** Tools and scripts like `range_generator.py` and `create_augmented_dataset.py` are used to define, adapt, and perturb player hand ranges. These ranges are then used to augment gamestate datasets, providing richer context for training the LLM. The system can:
+    *   Define base range archetypes (Tight, Balanced, Loose).
+    *   Adaptively select appropriate ranges for a "hero" player based on their known hand.
+    *   Perturb ranges to create diverse training examples.
+    *   Process input CSVs of game scenarios and output augmented CSVs with generated range information for both In-Position (IP) and Out-of-Position (OOP) players.
 
-[WASM Postflop]: https://github.com/b-inary/wasm-postflop
-[Desktop Postflop]: https://github.com/b-inary/desktop-postflop
+## Inference
+During gameplay, the LLM receives the current game state as a prompt and autoregressively generates its internal search trace. The final action taken by the AI is based on the initial move that leads to the highest overall backed-up EV through this multi-step simulated lookahead.
 
-## Usage
-
-- `Cargo.toml`
-
-```toml
-[dependencies]
-postflop-solver = { git = "https://github.com/b-inary/postflop-solver" }
-```
-
-- Examples
-
-You can find examples in the [examples](examples) directory.
-
-If you have cloned this repository, you can run the example with the following command:
-
-```sh
-$ cargo run --release --example basic
-```
-
-## Implementation details
-
-- **Algorithm**: The solver uses the state-of-the-art [Discounted CFR] algorithm.
-  Currently, the value of γ is set to 3.0 instead of the 2.0 recommended in the original paper.
-  Also, the solver resets the cumulative strategy when the number of iterations is a power of 4.
-- **Performance**: The solver engine is highly optimized for performance with maintainable code.
-  The engine supports multithreading by default, and it takes full advantage of unsafe Rust in hot spots.
-  The developer reviews the assembly output from the compiler and ensures that SIMD instructions are used as much as possible.
-  Combined with the algorithm described above, the performance surpasses paid solvers such as PioSOLVER and GTO+.
-- **Isomorphism**: The solver does not perform any abstraction.
-  However, isomorphic chances (turn and river deals) are combined into one.
-  For example, if the flop is monotone, the three non-dealt suits are isomorphic, allowing us to skip the calculation for two of the three suits.
-- **Precision**: 32-bit floating-point numbers are used in most places.
-  When calculating summations, temporary values use 64-bit floating-point numbers.
-  There is also a compression option where each game node stores the values by 16-bit integers with a single 32-bit floating-point scaling factor.
-- **Bunching effect**: At the time of writing, this is the only implementation that can handle the bunching effect.
-  It supports up to four folded players (6-max game).
-  The implementation correctly counts the number of card combinations and does not rely on heuristics such as manipulating the probability distribution of the deck.
-  Note, however, that enabling the bunching effect increases the time complexity of the evaluation at the terminal nodes and slows down the computation significantly.
-
-[Discounted CFR]: https://arxiv.org/abs/1809.04040
-
-## Crate features
-
-- `bincode`: Uses [bincode] crate (2.0.0-rc.3) to serialize and deserialize the `PostFlopGame` struct.
-  This feature is required to save and load the game tree.
-  Enabled by default.
-- `custom-alloc`: Uses custom memory allocator in solving process (only available in nightly Rust).
-  It significantly reduces the number of calls of the default allocator, so it is recommended to use this feature when the default allocator is not so efficient.
-  Note that this feature assumes that, at most, only one instance of `PostFlopGame` is available when solving in a program.
-  Disabled by default.
-- `rayon`: Uses [rayon] crate for parallelization.
-  Enabled by default.
-- `zstd`: Uses [zstd] crate to compress and decompress the game tree.
-  This feature is required to save and load the game tree with compression.
-  Disabled by default.
-
-[bincode]: https://github.com/bincode-org/bincode
-[rayon]: https://github.com/rayon-rs/rayon
-[zstd]: https://github.com/gyscos/zstd-rs
-
-## License
-
-Copyright (C) 2022 Wataru Inariba
-
-This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-
-This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License along with this program.  If not, see <https://www.gnu.org/licenses/>.
+## Future Directions
+Future work includes refining the trace format, enhancing selective expansion strategies, optimizing the training pipeline, and evaluating the LLM's playing strength against established benchmarks.
