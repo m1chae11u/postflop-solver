@@ -38,4 +38,4 @@ To train the LLM, a comprehensive dataset of poker game scenarios is required. T
 During gameplay, the LLM receives the current game state as a prompt and autoregressively generates its internal search trace. The final action taken by the AI is based on the initial move that leads to the highest overall backed-up EV through this multi-step simulated lookahead.
 
 ## Future Directions
-Future work includes refining the trace format, enhancing selective expansion strategies, optimizing the training pipeline, and evaluating the LLM's playing strength against established benchmarks.
+Future work includes refining the trace format, enhancing selective expansion strategies, optimizing the training pipeline/testing training strategies, and evaluating the LLM's playing strength against established benchmarks.
